@@ -55,6 +55,30 @@ class SolidityCompiler:
         if self.SOLC_VERSION not in installed:
             solcx.install_solc(self.SOLC_VERSION)
 
+    # Path to v4-core library
+    V4_CORE_DIR = CONTRACTS_DIR / "lib" / "v4-core" / "src"
+
+    # Specific v4-core files needed for hook strategy compilation.
+    # Only interface and type files - not PoolManager.sol or ProtocolFees.sol
+    # (which require solc 0.8.26 and external dependencies like solmate).
+    V4_REQUIRED_FILES = [
+        "interfaces/IHooks.sol",
+        "interfaces/IPoolManager.sol",
+        "interfaces/IProtocolFees.sol",
+        "interfaces/IExtsload.sol",
+        "interfaces/IExttload.sol",
+        "interfaces/external/IERC6909Claims.sol",
+        "interfaces/external/IERC20Minimal.sol",
+        "types/PoolKey.sol",
+        "types/PoolId.sol",
+        "types/BalanceDelta.sol",
+        "types/BeforeSwapDelta.sol",
+        "types/Currency.sol",
+        "types/Slot0.sol",
+        "libraries/SafeCast.sol",
+        "libraries/CustomRevert.sol",
+    ]
+
     def _load_base_contracts(self) -> dict[str, str]:
         """Load base contract sources from the contracts directory."""
         sources = {}
@@ -63,6 +87,14 @@ class SolidityCompiler:
             src_file = self.CONTRACTS_DIR / "src" / contract
             if src_file.exists():
                 sources[contract] = src_file.read_text()
+
+        # Load specific v4-core source files needed for compilation
+        for rel_path in self.V4_REQUIRED_FILES:
+            full_path = self.V4_CORE_DIR / rel_path
+            if full_path.exists():
+                source_key = f"v4-core/{rel_path}"
+                sources[source_key] = full_path.read_text()
+
         return sources
 
     def compile(self, source_code: str, contract_name: str = "Strategy") -> CompilationResult:
@@ -113,12 +145,12 @@ class SolidityCompiler:
                 },
             }
 
-            # Compile
+            # Compile - allow paths for both src and v4-core
             output = solcx.compile_standard(
                 input_json,
                 solc_version=self.SOLC_VERSION,
                 base_path=str(self.CONTRACTS_SRC_DIR),
-                allow_paths=str(self.CONTRACTS_SRC_DIR),
+                allow_paths=[str(self.CONTRACTS_SRC_DIR), str(self.V4_CORE_DIR)],
             )
 
             # Check for errors in output
@@ -256,20 +288,26 @@ class SolidityCompiler:
 
         return hits
 
+    # Permitted storage entries from AMMStrategyBase:
+    # - slots[32] at slot 0 (1KB of user storage)
+    # - _bidFee (uint24) at slot 32
+    # - _askFee (uint24) at slot 32 (packed with _bidFee)
+    ALLOWED_STORAGE_LABELS = {"slots", "_bidFee", "_askFee"}
+
     def _validate_storage_layout(self, storage_entries: list[dict]) -> list[str]:
-        """Validate strategy storage layout is limited to AMMStrategyBase.slots."""
+        """Validate strategy storage layout is limited to AMMStrategyBase fields."""
         errors: list[str] = []
         for entry in storage_entries:
             label = entry.get("label")
-            slot = entry.get("slot")
-            offset = entry.get("offset")
 
-            # The only permitted storage entry is the inherited `slots` array at slot 0.
-            if label == "slots" and str(slot) == "0" and str(offset) == "0":
+            # Allow all fields inherited from AMMStrategyBase
+            if label in self.ALLOWED_STORAGE_LABELS:
                 continue
 
+            slot = entry.get("slot")
+            offset = entry.get("offset")
             errors.append(
-                "State storage outside AMMStrategyBase.slots[0..31] is not allowed "
+                "State storage outside AMMStrategyBase fields is not allowed "
                 f"(found '{label}' at slot {slot}, offset {offset})."
             )
 

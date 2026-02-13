@@ -15,7 +15,9 @@ BASE_IMPORTS = """// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
 import {AMMStrategyBase} from "./AMMStrategyBase.sol";
-import {IAMMStrategy, TradeInfo} from "./IAMMStrategy.sol";
+import {IAMMStrategy} from "./IAMMStrategy.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 """
 
 
@@ -30,12 +32,16 @@ def _strategy_body(body: str) -> str:
 
 def _minimal_functions() -> str:
     return """
-    function afterInitialize(uint256, uint256) external override returns (uint256 bidFee, uint256 askFee) {
-        return (bpsToWad(30), bpsToWad(30));
+    function _onInitialize(uint160, int24) internal pure override returns (uint24, uint24) {
+        return (3000, 3000);
     }
 
-    function afterSwap(TradeInfo calldata) external override returns (uint256 bidFee, uint256 askFee) {
-        return (bpsToWad(30), bpsToWad(30));
+    function _onSwap(
+        IPoolManager.SwapParams calldata,
+        BalanceDelta,
+        bytes calldata
+    ) internal pure override returns (uint24, uint24) {
+        return (3000, 3000);
     }
 
     function getName() external pure override returns (string memory) {
@@ -46,8 +52,12 @@ def _minimal_functions() -> str:
 
 def _swap_and_name_functions() -> str:
     return """
-    function afterSwap(TradeInfo calldata) external override returns (uint256 bidFee, uint256 askFee) {
-        return (bpsToWad(30), bpsToWad(30));
+    function _onSwap(
+        IPoolManager.SwapParams calldata,
+        BalanceDelta,
+        bytes calldata
+    ) internal pure override returns (uint24, uint24) {
+        return (3000, 3000);
     }
 
     function getName() external pure override returns (string memory) {
@@ -94,7 +104,7 @@ def _baseline_bytecode() -> bytes:
 def test_validator_blocks_dot_call_syntax() -> None:
     source = _strategy_body(
         """
-    function afterInitialize(uint256, uint256) external override returns (uint256 bidFee, uint256 askFee) {
+    function _onInitialize(uint160, int24) internal override returns (uint24, uint24) {
         (bool ok,) = address(this).call("");
         if (ok) { return (1, 1); }
         return (2, 2);
@@ -110,9 +120,9 @@ def test_validator_blocks_dot_call_syntax() -> None:
 def test_validator_blocks_memory_safe_assembly_variant() -> None:
     source = _strategy_body(
         """
-    function afterInitialize(uint256, uint256) external override returns (uint256 bidFee, uint256 askFee) {
+    function _onInitialize(uint160, int24) internal override returns (uint24, uint24) {
         assembly ("memory-safe") { }
-        return (bpsToWad(30), bpsToWad(30));
+        return (3000, 3000);
     }
 """
         + _swap_and_name_functions()
@@ -126,11 +136,13 @@ def test_validator_rejects_path_traversal_import() -> None:
     source = """// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 import "AMMStrategyBase.sol/../README.md";
-import {IAMMStrategy, TradeInfo} from "./IAMMStrategy.sol";
+import {IAMMStrategy} from "./IAMMStrategy.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 contract Strategy is AMMStrategyBase {
-    function afterInitialize(uint256, uint256) external pure returns (uint256, uint256) { return (0, 0); }
-    function afterSwap(TradeInfo calldata) external pure returns (uint256, uint256) { return (0, 0); }
-    function getName() external pure returns (string memory) { return "x"; }
+    function _onInitialize(uint160, int24) internal pure override returns (uint24, uint24) { return (0, 0); }
+    function _onSwap(IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata) internal pure override returns (uint24, uint24) { return (0, 0); }
+    function getName() external pure override returns (string memory) { return "x"; }
 }
 """
     result = SolidityValidator().validate(source)
@@ -142,11 +154,13 @@ def test_validator_accepts_parent_relative_base_imports() -> None:
     source = """// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 import {AMMStrategyBase} from "../AMMStrategyBase.sol";
-import {IAMMStrategy, TradeInfo} from "../IAMMStrategy.sol";
+import {IAMMStrategy} from "../IAMMStrategy.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 contract Strategy is AMMStrategyBase {
-    function afterInitialize(uint256, uint256) external pure returns (uint256, uint256) { return (0, 0); }
-    function afterSwap(TradeInfo calldata) external pure returns (uint256, uint256) { return (0, 0); }
-    function getName() external pure returns (string memory) { return "x"; }
+    function _onInitialize(uint160, int24) internal pure override returns (uint24, uint24) { return (0, 0); }
+    function _onSwap(IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata) internal pure override returns (uint24, uint24) { return (0, 0); }
+    function getName() external pure override returns (string memory) { return "x"; }
 }
 """
     result = SolidityValidator().validate(source)
@@ -159,9 +173,9 @@ def test_validator_rejects_reserved_name_redeclaration() -> None:
         + """
 contract AMMStrategyBase {}
 contract Strategy is AMMStrategyBase {
-    function afterInitialize(uint256, uint256) external pure returns (uint256, uint256) { return (0, 0); }
-    function afterSwap(TradeInfo calldata) external pure returns (uint256, uint256) { return (0, 0); }
-    function getName() external pure returns (string memory) { return "x"; }
+    function _onInitialize(uint160, int24) internal pure override returns (uint24, uint24) { return (0, 0); }
+    function _onSwap(IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata) internal pure override returns (uint24, uint24) { return (0, 0); }
+    function getName() external pure override returns (string memory) { return "x"; }
 }
 """
     )
@@ -176,8 +190,8 @@ def test_validator_rejects_commented_inheritance_spoof() -> None:
         + """
 // contract Strategy is AMMStrategyBase
 contract Strategy is IAMMStrategy {
-    function afterInitialize(uint256, uint256) external pure returns (uint256, uint256) { return (0, 0); }
-    function afterSwap(TradeInfo calldata) external pure returns (uint256, uint256) { return (0, 0); }
+    function _onInitialize(uint160, int24) internal pure returns (uint24, uint24) { return (0, 0); }
+    function _onSwap(IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata) internal pure returns (uint24, uint24) { return (0, 0); }
     function getName() external pure returns (string memory) { return "x"; }
 }
 """
@@ -190,7 +204,7 @@ contract Strategy is IAMMStrategy {
 def test_compiler_rejects_forbidden_runtime_opcodes() -> None:
     source = _strategy_body(
         """
-    function afterInitialize(uint256, uint256) external override returns (uint256 bidFee, uint256 askFee) {
+    function _onInitialize(uint160, int24) internal override returns (uint24, uint24) {
         (bool ok,) = address(this).call("");
         if (ok) { return (1, 1); }
         return (2, 2);
@@ -230,32 +244,41 @@ def test_compiler_rejects_storage_outside_slots() -> None:
 
 
 def test_rust_engine_rejects_out_of_range_fee_returns() -> None:
-    huge_fee = "170141183460469231731687303715884105728"  # 2^127
+    # With v4 hooks, fees are uint24 and clamped by the base contract to MAX_FEE (100_000).
+    # The clampFee function in AMMStrategyBase prevents out-of-range returns.
+    # Test that returning an unreasonably large fee still gets clamped.
     source = _strategy_body(
-        f"""
-    function afterInitialize(uint256, uint256) external pure override returns (uint256 bidFee, uint256 askFee) {{
-        return ({huge_fee}, {huge_fee});
-    }}
+        """
+    function _onInitialize(uint160, int24) internal pure override returns (uint24, uint24) {
+        return (200000, 200000);
+    }
 
-    function afterSwap(TradeInfo calldata) external pure override returns (uint256 bidFee, uint256 askFee) {{
-        return ({huge_fee}, {huge_fee});
-    }}
+    function _onSwap(
+        IPoolManager.SwapParams calldata,
+        BalanceDelta,
+        bytes calldata
+    ) internal pure override returns (uint24, uint24) {
+        return (200000, 200000);
+    }
 
-    function getName() external pure override returns (string memory) {{
+    function getName() external pure override returns (string memory) {
         return "overflow";
-    }}
+    }
 """
     )
     compiler = SolidityCompiler()
     submission = compiler.compile(source)
     assert submission.success, submission.errors
 
-    with pytest.raises(Exception):
-        amm_sim_rs.run_single(
-            list(submission.bytecode),
-            list(_baseline_bytecode()),
-            _sim_config(),
-        )
+    # The base contract clamps to MAX_FEE (100_000 = 10%), so this should
+    # succeed rather than raise. The fee is clamped, not rejected.
+    from amm_competition.evm.adapter import EVMStrategyAdapter
+    from decimal import Decimal
+    adapter = EVMStrategyAdapter(bytecode=submission.bytecode, abi=submission.abi)
+    fees = adapter.after_initialize(Decimal("100"), Decimal("10000"))
+    # Clamped to 10% = 0.1
+    assert fees.bid_fee == Decimal("0.1")
+    assert fees.ask_fee == Decimal("0.1")
 
 
 def test_python_executor_deploy_is_bounded_for_infinite_constructor() -> None:

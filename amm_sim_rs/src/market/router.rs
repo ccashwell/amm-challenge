@@ -295,11 +295,11 @@ mod tests {
     #[test]
     fn test_split_formulas() {
         // Test the split formulas without EVM
-        let x1 = 1000.0;
-        let y1 = 1000.0;
-        let x2 = 1000.0;
-        let y2 = 1000.0;
-        let f = 0.0025;
+        let x1: f64 = 1000.0;
+        let y1: f64 = 1000.0;
+        let x2: f64 = 1000.0;
+        let y2: f64 = 1000.0;
+        let f: f64 = 0.0025;
         let gamma = 1.0 - f;
         let total_y = 100.0;
 

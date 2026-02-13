@@ -49,17 +49,17 @@ class SolidityValidator:
         (r"interface\s+\w+\s*\{(?![\s\S]*IAMMStrategy)", "Custom interfaces are not allowed"),
     ]
 
-    # Required patterns
+    # Required patterns (v4 hook callbacks)
     REQUIRED_PATTERNS = [
-        # Must implement afterInitialize
+        # Must implement _onInitialize (v4 hook callback)
         (
-            r"function\s+afterInitialize\s*\(",
-            "Must implement afterInitialize(uint256, uint256) function",
+            r"function\s+_onInitialize\s*\(",
+            "Must implement _onInitialize(uint160, int24) function",
         ),
-        # Must implement afterSwap
+        # Must implement _onSwap (v4 hook callback)
         (
-            r"function\s+afterSwap\s*\(",
-            "Must implement afterSwap(TradeInfo calldata) function",
+            r"function\s+_onSwap\s*\(",
+            "Must implement _onSwap(IPoolManager.SwapParams, BalanceDelta, bytes) function",
         ),
         # Must implement getName
         (
@@ -68,16 +68,20 @@ class SolidityValidator:
         ),
     ]
 
-    # Allowed imports (only base contracts)
+    # Allowed imports (base contracts + v4-core types)
     ALLOWED_IMPORT_PATHS = {
         "AMMStrategyBase.sol",
         "IAMMStrategy.sol",
     }
 
+    # Additional allowed import prefixes for v4-core types
+    ALLOWED_IMPORT_PREFIXES = [
+        "v4-core/",
+    ]
+
     RESERVED_IDENTIFIERS = {
         "AMMStrategyBase",
         "IAMMStrategy",
-        "TradeInfo",
     }
 
     def validate(self, source_code: str) -> ValidationResult:
@@ -192,26 +196,29 @@ class SolidityValidator:
         if not imports:
             errors.append(
                 "Missing required imports. "
-                "Only './AMMStrategyBase.sol' and './IAMMStrategy.sol' are allowed."
+                "Must import from './AMMStrategyBase.sol' and './IAMMStrategy.sol'."
             )
             return errors
 
         seen = set()
         for import_path in imports:
+            # Check if it's a v4-core import (allowed prefix)
+            if any(import_path.startswith(prefix) for prefix in self.ALLOWED_IMPORT_PREFIXES):
+                continue
+
             normalized = self._normalize_import_path(import_path)
             if normalized is None or normalized not in self.ALLOWED_IMPORT_PATHS:
                 errors.append(
                     f"Import '{import_path}' is not allowed. "
-                    "Only './AMMStrategyBase.sol' and './IAMMStrategy.sol' are allowed."
+                    "Only base contracts and v4-core types are allowed."
                 )
                 continue
             seen.add(normalized)
 
-        missing = self.ALLOWED_IMPORT_PATHS - seen
-        if missing:
+        # At minimum, AMMStrategyBase must be imported
+        if "AMMStrategyBase.sol" not in seen:
             errors.append(
-                "Missing required base imports: "
-                + ", ".join(sorted(f"'./{path}'" for path in missing))
+                "Missing required import: './AMMStrategyBase.sol'"
             )
 
         return errors
@@ -304,7 +311,7 @@ class SolidityValidator:
                 if match:
                     var_name = match.group(2)
                     # Ignore known safe patterns
-                    if var_name not in ["slots", "WAD", "MAX_FEE", "MIN_FEE", "BPS"]:
+                    if var_name not in ["slots", "WAD", "MAX_FEE", "MIN_FEE", "BPS", "DYNAMIC_FEE_FLAG", "_bidFee", "_askFee"]:
                         warnings.append(
                             f"State variable '{var_name}' declared outside slots array. "
                             "Use slots[0-31] for persistent storage to ensure storage limits."

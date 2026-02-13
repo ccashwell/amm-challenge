@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(w.0, WAD / 2);
 
         let w = Wad::from_f64(0.0025); // 25 bps
-        assert_eq!(w.0, 25 * BPS / 10);
+        assert_eq!(w.0, 25 * BPS);
     }
 
     #[test]

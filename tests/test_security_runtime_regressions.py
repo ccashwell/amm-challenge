@@ -30,7 +30,7 @@ def test_after_swap_fast_rejects_short_return_data(vanilla_bytecode_and_abi) -> 
 
     executor.evm = ShortReturnEVM()
 
-    with pytest.raises(RuntimeError, match="afterSwap failed: Invalid return data length"):
+    with pytest.raises(RuntimeError, match="afterSwap failed"):
         executor.after_swap_fast(_sample_trade())
 
 
@@ -73,7 +73,8 @@ def test_adapter_clamps_out_of_range_swap_fees(vanilla_bytecode_and_abi) -> None
 
     class FakeExecutor:
         def after_swap_fast(self, trade):
-            return (-1, 2 * 10**17)  # -1 WAD, 20% WAD
+            # V4 fees: -1 (invalid), 200_000 (20% in v4 units)
+            return (-1, 200_000)
 
     adapter._executor = FakeExecutor()
     quote = adapter.after_swap(_sample_trade())

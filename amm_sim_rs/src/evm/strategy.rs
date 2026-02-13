@@ -1,4 +1,4 @@
-//! EVM strategy wrapper using revm.
+//! EVM strategy wrapper using revm (Uniswap v4 hook-compatible).
 
 use revm::{
     primitives::{
@@ -9,7 +9,7 @@ use revm::{
 };
 use thiserror::Error;
 
-use crate::types::trade_info::{encode_after_initialize, decode_fee_pair, TradeInfo, SELECTOR_GET_NAME};
+use crate::types::trade_info::{encode_after_initialize, decode_fee_pair, TradeInfo, SELECTOR_GET_NAME, SELECTOR_GET_FEES};
 use crate::types::wad::Wad;
 
 /// Errors that can occur during EVM execution.
@@ -29,9 +29,10 @@ pub enum EVMError {
 }
 
 /// Gas limits for strategy execution.
-const GAS_LIMIT_INIT: u64 = 250_000;
-const GAS_LIMIT_TRADE: u64 = 250_000;
+const GAS_LIMIT_INIT: u64 = 500_000;
+const GAS_LIMIT_TRADE: u64 = 500_000;
 const GAS_LIMIT_NAME: u64 = 50_000;
+const GAS_LIMIT_GET_FEES: u64 = 50_000;
 
 /// Fixed addresses for simulation.
 const STRATEGY_ADDRESS: Address = Address::new([
@@ -44,9 +45,9 @@ const CALLER_ADDRESS: Address = Address::new([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
 ]);
 
-/// EVM strategy executor.
+/// EVM strategy executor (Uniswap v4 hook-compatible).
 ///
-/// Wraps a Solidity AMM strategy and executes it using revm.
+/// Wraps a Solidity AMM strategy hook and executes it using revm.
 pub struct EVMStrategy {
     /// Strategy name (cached after first call)
     name: String,
@@ -54,8 +55,8 @@ pub struct EVMStrategy {
     bytecode: Vec<u8>,
     /// In-memory database for EVM state
     db: InMemoryDB,
-    /// Pre-allocated calldata buffer for after_swap (196 bytes)
-    trade_calldata: [u8; 196],
+    /// Pre-allocated calldata buffer for after_swap (v4: 484 bytes)
+    trade_calldata: [u8; 484],
 }
 
 impl EVMStrategy {
@@ -65,7 +66,7 @@ impl EVMStrategy {
             name: default_name,
             bytecode: bytecode.clone(),
             db: InMemoryDB::default(),
-            trade_calldata: [0u8; 196],
+            trade_calldata: [0u8; 484],
         };
 
         strategy.deploy()?;
@@ -140,7 +141,6 @@ impl EVMStrategy {
         let result = self.call(&SELECTOR_GET_NAME, GAS_LIMIT_NAME)?;
 
         // Decode string return value
-        // String is encoded as: offset (32 bytes) + length (32 bytes) + data
         if result.len() >= 64 {
             let offset = u256_to_usize(&result[0..32]).unwrap_or(32);
             if offset + 32 <= result.len() {
@@ -156,23 +156,32 @@ impl EVMStrategy {
         Ok(())
     }
 
+    /// Read current fees via getFees() view function.
+    ///
+    /// Returns (bid_fee, ask_fee) in WAD.
+    fn get_fees(&mut self) -> Result<(Wad, Wad), EVMError> {
+        let result = self.call(&SELECTOR_GET_FEES, GAS_LIMIT_GET_FEES)?;
+        decode_fee_pair(&result)
+            .ok_or_else(|| EVMError::InvalidReturnData("Failed to decode fee pair from getFees()".into()))
+    }
+
     /// Get the strategy name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Initialize the strategy with starting reserves.
+    /// Initialize the strategy with starting reserves (v4 hook afterInitialize).
     ///
     /// Returns (bid_fee, ask_fee) in WAD.
     pub fn after_initialize(&mut self, initial_x: Wad, initial_y: Wad) -> Result<(Wad, Wad), EVMError> {
         let calldata = encode_after_initialize(initial_x, initial_y);
-        let result = self.call(&calldata, GAS_LIMIT_INIT)?;
-
-        decode_fee_pair(&result)
-            .ok_or_else(|| EVMError::InvalidReturnData("Failed to decode fee pair".into()))
+        // Call afterInitialize (returns bytes4, we don't need to check it)
+        self.call(&calldata, GAS_LIMIT_INIT)?;
+        // Read fees from storage via getFees()
+        self.get_fees()
     }
 
-    /// Handle a trade event and return updated fees.
+    /// Handle a trade event and return updated fees (v4 hook afterSwap).
     ///
     /// Returns (bid_fee, ask_fee) in WAD.
     #[inline]
@@ -182,10 +191,10 @@ impl EVMStrategy {
 
         // Copy calldata to avoid borrow conflict
         let calldata = self.trade_calldata;
-        let result = self.call(&calldata, GAS_LIMIT_TRADE)?;
-
-        decode_fee_pair(&result)
-            .ok_or_else(|| EVMError::InvalidReturnData("Failed to decode fee pair".into()))
+        // Call afterSwap (returns bytes4 + int128, we don't need to check them)
+        self.call(&calldata, GAS_LIMIT_TRADE)?;
+        // Read updated fees from storage via getFees()
+        self.get_fees()
     }
 
     /// Reset the strategy for a new simulation.

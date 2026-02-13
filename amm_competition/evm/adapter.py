@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 from amm_competition.core.interfaces import AMMStrategy
 from amm_competition.core.trade import FeeQuote, TradeInfo
-from amm_competition.evm.executor import EVMStrategyExecutor, EVMExecutionResult, _WAD_DECIMAL
+from amm_competition.evm.executor import EVMStrategyExecutor, EVMExecutionResult, _v4_fee_to_decimal, _V4_FEE_DENOMINATOR_DECIMAL
 from amm_competition.evm.compiler import SolidityCompiler, CompilationResult
 from amm_competition.evm.validator import SolidityValidator, ValidationResult
 
@@ -13,8 +13,8 @@ from amm_competition.evm.validator import SolidityValidator, ValidationResult
 class EVMStrategyAdapter(AMMStrategy):
     """Adapts an EVM-based Solidity strategy to the Python AMMStrategy interface.
 
-    This allows Solidity strategies to be used seamlessly with the existing
-    Python simulation engine, match runner, and scoring system.
+    This allows Solidity strategies (Uniswap v4 hooks) to be used seamlessly
+    with the existing Python simulation engine, match runner, and scoring system.
     """
 
     def __init__(
@@ -100,20 +100,20 @@ class EVMStrategyAdapter(AMMStrategy):
         Raises:
             RuntimeError: If EVM execution fails
         """
-        # Use fast path that returns WAD values
-        bid_wad, ask_wad = self._executor.after_swap_fast(trade)
+        # Use fast path that returns v4 fee values
+        bid_v4, ask_v4 = self._executor.after_swap_fast(trade)
         self.call_count += 1
 
-        # Convert to Decimal only at the boundary
+        # Convert v4 fee to Decimal: fee / 1_000_000
         return FeeQuote(
-            bid_fee=self._clamp_fee_decimal(Decimal(bid_wad) / _WAD_DECIMAL),
-            ask_fee=self._clamp_fee_decimal(Decimal(ask_wad) / _WAD_DECIMAL),
+            bid_fee=self._clamp_fee_decimal(Decimal(bid_v4) / _V4_FEE_DENOMINATOR_DECIMAL),
+            ask_fee=self._clamp_fee_decimal(Decimal(ask_v4) / _V4_FEE_DENOMINATOR_DECIMAL),
         )
 
     def after_swap_wad(self, trade: TradeInfo) -> Tuple[int, int]:
         """Fast path: handle a trade event and return WAD values.
 
-        This avoids Decimal conversions for performance-critical paths.
+        This converts v4 fees to WAD for compatibility with the simulation engine.
 
         Args:
             trade: Information about the just-executed trade
@@ -122,7 +122,10 @@ class EVMStrategyAdapter(AMMStrategy):
             Tuple of (bid_fee_wad, ask_fee_wad) as integers
         """
         self.call_count += 1
-        return self._executor.after_swap_fast(trade)
+        bid_v4, ask_v4 = self._executor.after_swap_fast(trade)
+        # Convert v4 fee to WAD: (fee / 1_000_000) * 1e18 = fee * 1e12
+        wad_per_v4_unit = 10**18 // 1_000_000  # = 10**12
+        return (bid_v4 * wad_per_v4_unit, ask_v4 * wad_per_v4_unit)
 
     def get_name(self) -> str:
         """Get the strategy name.

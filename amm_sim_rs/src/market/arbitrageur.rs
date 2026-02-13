@@ -199,8 +199,8 @@ mod tests {
     #[test]
     fn test_arb_formulas() {
         // Test the closed-form formulas without EVM
-        let rx = 1000.0;
-        let ry = 1000.0;
+        let rx: f64 = 1000.0;
+        let ry: f64 = 1000.0;
         let k = rx * ry;
         let fee = 0.0025; // 25 bps
         let gamma = 1.0 - fee;
@@ -220,8 +220,8 @@ mod tests {
 
     #[test]
     fn test_arb_sizes_maximize_profit() {
-        let rx = 1000.0;
-        let ry = 1000.0;
+        let rx: f64 = 1000.0;
+        let ry: f64 = 1000.0;
         let k = rx * ry;
         let fee = 0.05; // 5%
         let gamma = 1.0 - fee;
@@ -256,8 +256,8 @@ mod tests {
 
     #[test]
     fn test_arb_moves_price_into_no_arb_band() {
-        let rx = 1000.0;
-        let ry = 1000.0;
+        let rx: f64 = 1000.0;
+        let ry: f64 = 1000.0;
         let fee = 0.05; // 5%
         let gamma = 1.0 - fee;
 
