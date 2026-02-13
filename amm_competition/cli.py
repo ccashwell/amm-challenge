@@ -178,6 +178,59 @@ def validate_command(args: argparse.Namespace) -> int:
         return 1
 
 
+def benchmark_command(args: argparse.Namespace) -> int:
+    """Run a comprehensive benchmark of a hook across market scenarios."""
+    from amm_competition.benchmark.analyzer import HookBenchmark
+    from amm_competition.benchmark.scenarios import Scenario
+    from amm_competition.benchmark import scenarios as sc
+
+    strategy_path = Path(args.strategy)
+    if not strategy_path.exists():
+        print(f"Error: Strategy file not found: {strategy_path}")
+        return 1
+
+    # Select scenario suite
+    suite_map = {
+        "quick": sc.QUICK_SUITE,
+        "default": sc.DEFAULT_SUITE,
+        "full": sc.FULL_SUITE,
+    }
+    scenarios = suite_map.get(args.suite, sc.DEFAULT_SUITE)
+
+    # Apply simulation count override
+    if args.simulations is not None:
+        scenarios = [
+            Scenario(
+                name=s.name,
+                description=s.description,
+                n_simulations=args.simulations,
+                n_steps=s.n_steps,
+                initial_price=s.initial_price,
+                initial_x=s.initial_x,
+                initial_y=s.initial_y,
+                gbm_mu=s.gbm_mu,
+                gbm_sigma=s.gbm_sigma,
+                gbm_dt=s.gbm_dt,
+                retail_arrival_rate=s.retail_arrival_rate,
+                retail_mean_size=s.retail_mean_size,
+                retail_buy_prob=s.retail_buy_prob,
+                retail_size_sigma=s.retail_size_sigma,
+            )
+            for s in scenarios
+        ]
+
+    print(f"Benchmarking {strategy_path.name} across {len(scenarios)} scenarios...\n")
+
+    try:
+        bench = HookBenchmark(strategy_path, validate=not args.skip_validation)
+        report = bench.run(scenarios=scenarios)
+        report.summary()
+        return 0
+    except (ValueError, RuntimeError) as e:
+        print(f"Error: {e}")
+        return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="AMM Design Competition - Simulate and score your strategy",
@@ -185,8 +238,9 @@ def main() -> int:
         epilog="""
 Examples:
   amm-match run my_strategy.sol
-  amm-match run my_strategy.sol --simulations 1000 --steps 1000
   amm-match validate my_strategy.sol
+  amm-match benchmark my_hook.sol
+  amm-match benchmark my_hook.sol --suite full --simulations 500
         """,
     )
 
@@ -257,6 +311,31 @@ Examples:
     )
     validate_parser.add_argument("strategy", help="Path to Solidity strategy file (.sol)")
     validate_parser.set_defaults(func=validate_command)
+
+    # Benchmark command
+    bench_parser = subparsers.add_parser(
+        "benchmark",
+        help="Benchmark a hook across multiple market scenarios",
+    )
+    bench_parser.add_argument("strategy", help="Path to Solidity hook file (.sol)")
+    bench_parser.add_argument(
+        "--suite",
+        choices=["quick", "default", "full"],
+        default="default",
+        help="Scenario suite to run (default: default)",
+    )
+    bench_parser.add_argument(
+        "--simulations",
+        type=int,
+        default=None,
+        help="Override simulation count per scenario",
+    )
+    bench_parser.add_argument(
+        "--skip-validation",
+        action="store_true",
+        help="Skip static analysis validation",
+    )
+    bench_parser.set_defaults(func=benchmark_command)
 
     args = parser.parse_args()
 
